@@ -1,5 +1,5 @@
 
-#  une recette: Mise en Place
+#  Une recette: Mise en Place
 
 **A professional-grade, aesthetic recipe organizer built for modern chefs.** RecipeBox combines high-end editorial design with functional utility. Featuring an interactive "Cooking Mode," smart ingredient searching, and a curated palette of "girly" and professional themes, it’s the ultimate digital sanctuary for your culinary creations.
 
