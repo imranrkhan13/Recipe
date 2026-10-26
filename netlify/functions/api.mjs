@@ -10,17 +10,24 @@ process.env.TRUST_PROXY ||= '1';
 process.env.NODE_ENV ||= 'production';
 let ready;
 function start() {
-  ready ||= new Promise((resolve, reject) => {
-    const server = http.createServer(createApp());
-    server.on('error', error => { ready = undefined; reject(error); });
-    server.on('close', () => { ready = undefined; });
-    server.listen(0, '127.0.0.1', () => { server.unref(); resolve(server.address().port); });
-  });
+  if (!ready) {
+    const attempt = new Promise((resolve, reject) => {
+      const server = http.createServer(createApp());
+      server.on('error', error => { ready = undefined; reject(error); });
+      server.on('close', () => { ready = undefined; });
+      server.listen(0, '127.0.0.1', () => { server.unref(); resolve(server.address().port); });
+    });
+    ready = attempt;
+    // A failed start must not stay cached: the next request tries again.
+    attempt.catch(() => { if (ready === attempt) ready = undefined; });
+  }
   return ready;
 }
 
 export default async function handler(request, context) {
-  const port = await start();
+  let port;
+  try { port = await start(); }
+  catch { return Response.json({ error: 'Service unavailable. Try again shortly.' }, { status: 503, headers: { 'Cache-Control': 'no-store' } }); }
   const url = new URL(request.url);
   const headers = Object.fromEntries(request.headers);
   headers.host = url.host;
