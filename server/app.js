@@ -11,7 +11,7 @@ const cookie = 'recette_session';
 const days = 14 * 24 * 60 * 60 * 1000;
 export function createApp(pool = getPool()) {
   const app = express();
-  if (process.env.VERCEL) app.set('trust proxy', 1);
+  if (process.env.VERCEL || process.env.TRUST_PROXY) app.set('trust proxy', 1);
   app.disable('x-powered-by');
   app.use('/api', (req, res, next) => {
     res.set({ 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
