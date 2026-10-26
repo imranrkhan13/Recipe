@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { api, readLegacy } from './api.js';
 
 /* ══════════════════════════════════════════════════════════════
    MISE EN PLACE — Professional Recipe App
@@ -50,6 +51,9 @@ body {
   --ease-out: cubic-bezier(0.0, 0.0, 0.2, 1);
 }
 
+button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+@media(max-width:640px){button.ibtn{min-width:44px;min-height:44px}.drawer-wrap .drawer{max-height:94dvh}.drawer .input{font-size:16px}.fab{bottom:calc(22px + env(safe-area-inset-bottom))}.drawer-footer{padding-bottom:calc(20px + env(safe-area-inset-bottom))}}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:0.01ms!important;animation-delay:0ms!important;transition-duration:0.01ms!important}}
 /* ── ANIMATIONS ── */
 @keyframes fadeUp    { from { opacity:0; transform:translateY(20px); } to { opacity:1; transform:translateY(0); } }
 @keyframes fadeIn    { from { opacity:0; } to { opacity:1; } }
@@ -656,13 +660,14 @@ const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 
 /* ─── HOOKS ─── */
 function useLS(k, d) {
   const [v, setV] = useState(() => { try { const s = localStorage.getItem(k); return s ? JSON.parse(s) : d; } catch { return d; } });
-  useEffect(() => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { } }, [k, v]);
+  useEffect(() => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* Storage can be unavailable; theme persistence is optional. */ } }, [k, v]);
   return [v, setV];
 }
 function useMQ(q) {
   const [m, setM] = useState(() => typeof window !== 'undefined' && window.matchMedia(q).matches);
   useEffect(() => {
     const mq = window.matchMedia(q);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setM(mq.matches);
     const h = e => setM(e.matches);
     mq.addEventListener('change', h);
@@ -722,6 +727,7 @@ function RImg({ title, custom, style, className }) {
   const [ok, setOk] = useState(!!custom);
   const [err, setErr] = useState(false);
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (custom) { setSrc(custom); setOk(true); return; }
     if (!title) { setErr(true); return; }
     setOk(false); setErr(false);
@@ -927,6 +933,7 @@ function AddDrawer({ open, initial, onClose, onSave, toast }) {
 
   useEffect(() => {
     if (open) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setD(initial ? { ...initial } : BLANK);
       setImgPrev(initial?.image || '');
       setTab(0);
@@ -939,14 +946,20 @@ function AddDrawer({ open, initial, onClose, onSave, toast }) {
   const addIng = () => upd({ ingredients: [...d.ingredients, { qty: '', unit: 'g', name: '' }] });
   const rmIng = i => upd({ ingredients: d.ingredients.filter((_, j) => j !== i) });
   const togTag = t => upd({ tags: d.tags.includes(t) ? d.tags.filter(x => x !== t) : [...d.tags, t] });
-  const loadFile = f => { if (!f) return; const url = URL.createObjectURL(f); setImgPrev(url); upd({ image: url }); };
+  const loadFile = f => {
+    if (!f) return;
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(f.type) || f.size > 200000) { toast('Use a JPG, PNG or WebP photo under 200 KB.'); return; }
+    const reader = new FileReader();
+    reader.onload = () => { setImgPrev(reader.result); upd({ image: reader.result }); };
+    reader.onerror = () => toast('Could not read this photo. Try another one.');
+    reader.readAsDataURL(f);
+  };
 
   const submit = e => {
     e.preventDefault();
     if (!d.title.trim()) { toast('Recipe title is required'); return; }
     if (!d.instructions.trim()) { toast('Add at least one instruction step'); return; }
-    onSave({ ...d, id: d.id || uid() });
-    toast(d.id ? 'Recipe updated!' : 'Recipe added to collection!');
+    onSave({ ...d, id: d.id || crypto.randomUUID() });
   };
 
   if (!open) return null;
@@ -997,7 +1010,7 @@ function AddDrawer({ open, initial, onClose, onSave, toast }) {
                         : <div style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10, color: 'var(--ink3)' }}>
                           <I n="camera" s={30} />
                           <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink2)' }}>Drop or click to upload</span>
-                          <span style={{ fontSize: 11, color: 'var(--ink3)' }}>Leave blank for automatic photo</span>
+                          <span style={{ fontSize: 11, color: 'var(--ink3)' }}>JPG, PNG or WebP · up to 200 KB</span>
                         </div>}
                       <input ref={fileRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={e => loadFile(e.target.files[0])} />
                     </div>
@@ -1319,7 +1332,16 @@ function EmptyState({ search, onAdd }) {
 /* ─── MAIN APP ─── */
 export default function App() {
   const [theme, setTheme] = useLS('mep-theme2', 'light');
-  const [recipes, setRecipes] = useLS('mep-recipes2', []);
+  const [recipes, setRecipes] = useState([]);
+  const [storageState, setStorageState] = useState('loading');
+  const [storageError, setStorageError] = useState('');
+  const [legacy, setLegacy] = useState(readLegacy);
+  const operation = useRef(false);
+  useEffect(() => {
+    let active = true;
+    api('/recipes').then(data => { if (active) { setRecipes(data.recipes); setStorageState('ready'); } }).catch(e => { if (active) { setStorageError(e.message); setStorageState('error'); } });
+    return () => { active = false; };
+  }, []);
   const [search, setSearch] = useState('');
   const [searchMode, setSearchMode] = useState('all');
   const [catFilter, setCatFilter] = useState('');
@@ -1361,19 +1383,58 @@ export default function App() {
     else setCols(4);
   }, [isSm, isMd, isLg]);
 
-  const save = useCallback(r => {
-    setRecipes(p => p.find(x => x.id === r.id) ? p.map(x => x.id === r.id ? r : x) : [r, ...p]);
-    setDrawerOpen(false); setEditRecipe(null);
-  }, [setRecipes]);
-
-  const del = useCallback(id => {
+  const mutate = async action => {
+    if (operation.current || storageState !== 'ready') return false;
+    if (!navigator.onLine) { push('Offline: reconnect to save changes.'); return false; }
+    operation.current = true;
+    try { await action(); return true; }
+    catch (e) { push(e.message); return false; }
+    finally { operation.current = false; }
+  };
+  const save = async r => mutate(async () => {
+    const { recipe } = await api(`/recipes/${encodeURIComponent(r.id)}`, { method: 'PUT', body: r });
+    setRecipes(p => p.find(x => x.id === recipe.id) ? p.map(x => x.id === recipe.id ? recipe : x) : [recipe, ...p]);
+    setDrawerOpen(false); setEditRecipe(null); push('Recipe saved to your private collection');
+  });
+  const del = async id => {
     if (!window.confirm('Remove this recipe?')) return;
-    setRecipes(p => p.filter(r => r.id !== id));
-    setViewRecipe(null); push('Recipe removed');
-  }, [setRecipes, push]);
-
-  const fav = useCallback(id => setRecipes(p => p.map(r => r.id === id ? { ...r, isFav: !r.isFav } : r)), [setRecipes]);
-  const openAdd = useCallback(() => { setEditRecipe(null); setDrawerOpen(true); }, []);
+    const recipe = recipes.find(r => r.id === id);
+    if (!recipe) return;
+    await mutate(async () => {
+      await api(`/recipes/${encodeURIComponent(id)}`, { method: 'DELETE', body: { version: recipe.version } });
+      setRecipes(p => p.filter(r => r.id !== id)); setViewRecipe(null); push('Recipe removed');
+    });
+  };
+  const fav = async id => {
+    const recipe = recipes.find(r => r.id === id);
+    if (!recipe) return;
+    await mutate(async () => {
+      const data = await api(`/recipes/${encodeURIComponent(id)}`, { method: 'PUT', body: { ...recipe, isFav: !recipe.isFav } });
+      setRecipes(p => p.map(r => r.id === id ? data.recipe : r));
+    });
+  };
+  const importLegacy = async () => {
+    if (!window.confirm('Copy this browser’s old recipes into the account currently shown above? Originals will remain on this browser.')) return;
+    await mutate(async () => {
+      const importedKey = 'mep-imported-' + (await api('/me')).user.username;
+      let imported;
+      try { imported = JSON.parse(localStorage.getItem(importedKey) || '{}'); } catch { imported = {}; }
+      const known = recipes.map(r => r.id);
+      let copied = 0;
+      for (const old of legacy) {
+        // Remember source-to-target mapping so a partial retry cannot duplicate successful copies.
+        const targetId = imported[old.id] || crypto.randomUUID();
+        if (known.includes(targetId)) continue;
+        if (old.image?.startsWith('blob:')) throw new Error('An old recipe has a temporary photo. Re-add or remove its photo before importing. Nothing was removed.');
+        const { recipe } = await api(`/recipes/${targetId}`, { method: 'PUT', body: { ...old, id: targetId, version: 0 } });
+        imported[old.id] = targetId;
+        localStorage.setItem(importedKey, JSON.stringify(imported));
+        setRecipes(p => [recipe, ...p]); copied++;
+      }
+      setLegacy([]); push(`${copied} recipes copied. Browser originals were kept.`);
+    });
+  };
+  const openAdd = () => { if (storageState !== 'ready') { push('Wait until your recipes load.'); return; } setEditRecipe(null); setDrawerOpen(true); };
   const openEdit = useCallback(r => { setViewRecipe(null); setEditRecipe(r); setDrawerOpen(true); }, []);
 
   const filtered = useMemo(() => {
@@ -1392,7 +1453,7 @@ export default function App() {
     if (catFilter) r = r.filter(x => x.category === catFilter);
     if (tagFilter) r = r.filter(x => x.tags?.includes(tagFilter));
     r.sort((a, b) => {
-      if (sortBy === 'newest') return b.id > a.id ? 1 : -1;
+      if (sortBy === 'newest') return 0; // Server returns creation order; UUIDs are not timestamps.
       if (sortBy === 'quickest') return a.time - b.time;
       if (sortBy === 'rating') return (b.rating || 0) - (a.rating || 0);
       if (sortBy === 'name') return a.title.localeCompare(b.title);
@@ -1414,6 +1475,9 @@ export default function App() {
     <div style={{ minHeight: '100vh', background: 'var(--bg)', color: 'var(--ink)', fontFamily: 'Poppins, sans-serif' }}>
 
       {/* TICKER */}
+      {storageState === 'loading' && <div className="storage-note" role="status">Loading your private collection...</div>}
+      {storageState === 'error' && <div className="storage-note" role="alert">Could not load recipes: {storageError}. No local data was removed.<button onClick={() => window.location.reload()}>Retry</button></div>}
+      {storageState === 'ready' && legacy.length > 0 && <div className="storage-note">{legacy.length} old recipes are still on this browser. Import only if they belong to you.<button onClick={importLegacy}>Copy into my account</button></div>}
       <Ticker recipes={recipes} />
 
       {/* NAV */}
@@ -1559,4 +1623,4 @@ export default function App() {
       </div>
     </div>
   );
-}
+                 }
