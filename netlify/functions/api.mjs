@@ -20,7 +20,9 @@ function start() {
 }
 
 export default async function handler(request, context) {
-  const port = await start();
+  let port;
+  try { port = await start(); }
+  catch { return Response.json({ error: 'Service unavailable. Try again shortly.' }, { status: 503, headers: { 'Cache-Control': 'no-store' } }); }
   const url = new URL(request.url);
   const headers = Object.fromEntries(request.headers);
   headers.host = url.host;
