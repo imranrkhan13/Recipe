@@ -1026,7 +1026,7 @@ function AddDrawer({ open, initial, onClose, onSave, toast }) {
                       ['Cook Time (min)', <input type="number" min={1} max={1440} className="input" value={d.time} onChange={e => upd({ time: parseInt(e.target.value) || 1 })} />],
                       ['Servings', <input type="number" min={1} max={100} className="input" value={d.servings} onChange={e => upd({ servings: parseInt(e.target.value) || 1 })} />],
                       ['Calories / serving', <input type="number" min={0} className="input" value={d.calories} onChange={e => upd({ calories: e.target.value })} placeholder="Optional" />],
-                      ['Cuisine', <select className="input" value={d.cuisine} onChange={e => upd({ cuisine: e.target.value })}>{CUISINES.map(c => <option key={c} value={c}>{c || 'Select...'}</option>)}</select>],
+                      ['Cuisine', <><input className="input" list="cuisine-options" maxLength={100} value={d.cuisine} onChange={e => upd({ cuisine: e.target.value })} placeholder="Pick one or type your own" /><datalist id="cuisine-options">{CUISINES.filter(Boolean).map(c => <option key={c} value={c} />)}</datalist></>],
                     ].map(([lbl, el]) => <div key={lbl}><label className="field-label">{lbl}</label>{el}</div>)}
                   </div>
 

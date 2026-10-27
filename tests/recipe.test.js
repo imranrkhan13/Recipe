@@ -13,3 +13,7 @@ test('reject invalid required fields, IDs, oversized inputs and temporary images
 test('accept bounded persistent photos and HTTPS links', () => {
   for (const image of ['https://example.com/synthetic.jpg', 'data:image/png;base64,AAAA']) assert.equal(validateRecipe({ ...sample, image }).image, image);
 });
+test('accept custom cuisine names and reject over-long ones', () => {
+  for (const cuisine of ['Polish', 'Greek', 'Żurek-style Polish', '日本料理']) assert.equal(validateRecipe({ ...sample, cuisine }).cuisine, cuisine);
+  assert.throws(() => validateRecipe({ ...sample, cuisine: 'a'.repeat(101) }), InputError);
+});
