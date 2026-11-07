@@ -27,12 +27,29 @@ export function createApp(pool = getPool()) {
   // Per-instance backstop. Production deployments should also enforce edge-wide rate limits.
   const authLimit = rateLimit({ windowMs: 15 * 60 * 1000, limit: 20, standardHeaders: 'draft-7', legacyHeaders: false, message: { error: 'Too many attempts. Try again later.' } });
   const cookieOptions = { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'strict', path: '/', maxAge: days };
-  async function identify(req, res, next) {
+  async function attachUser(req) {
     const token = req.cookies[cookie];
-    if (!token || !/^[a-f0-9]{64}$/.test(token)) return res.status(401).json({ error: 'Please sign in' });
+    if (!token || !/^[a-f0-9]{64}$/.test(token)) return null;
     const result = await pool.query('SELECT u.id,u.username FROM une_recette.sessions s JOIN une_recette.users u ON u.id=s.user_id WHERE s.token_hash=$1 AND s.expires_at>now()', [hash(token)]);
-    if (!result.rows[0]) return res.status(401).json({ error: 'Please sign in' });
-    req.user = result.rows[0]; next();
+    return result.rows[0] || null;
+  }
+  async function identify(req, res, next) {
+    const user = await attachUser(req);
+    if (!user) return res.status(401).json({ error: 'Please sign in' });
+    req.user = user; next();
+  }
+
+  // Share links need the share_token column (db/002-share.sql). The rest of the
+  // app must keep working if a deploy lands before that migration runs, so the
+  // column is probed once and share routes degrade until it exists. A positive
+  // result is cached; a missing column is re-probed so sharing self-heals after
+  // the migration without a redeploy.
+  let shareReady = false;
+  async function sharingAvailable() {
+    if (shareReady) return true;
+    try { await pool.query('SELECT share_token FROM une_recette.recipes LIMIT 0'); shareReady = true; }
+    catch (e) { if (e.code !== '42703' && !/column .* does not exist/i.test(e.message || '')) throw e; }
+    return shareReady;
   }
   async function session(res, user) {
     const token = randomBytes(32).toString('hex');
@@ -68,8 +85,12 @@ export function createApp(pool = getPool()) {
   });
   app.get('/api/me', identify, (req, res) => res.json({ user: { username: req.user.username } }));
   app.get('/api/recipes', identify, async (req, res) => {
+    if (await sharingAvailable()) {
+      const result = await pool.query('SELECT data,version,share_token FROM une_recette.recipes WHERE owner_id=$1 ORDER BY created_at DESC', [req.user.id]);
+      return res.json({ recipes: result.rows.map(row => ({ ...row.data, version: row.version, shared: !!row.share_token })) });
+    }
     const result = await pool.query('SELECT data,version FROM une_recette.recipes WHERE owner_id=$1 ORDER BY created_at DESC', [req.user.id]);
-    res.json({ recipes: result.rows.map(row => ({ ...row.data, version: row.version })) });
+    res.json({ recipes: result.rows.map(row => ({ ...row.data, version: row.version, shared: false })) });
   });
   app.put('/api/recipes/:id', identify, async (req, res) => {
     const recipe = validateRecipe(req.body);
@@ -88,6 +109,36 @@ export function createApp(pool = getPool()) {
     const result = await pool.query('DELETE FROM une_recette.recipes WHERE owner_id=$1 AND id=$2 AND version=$3 RETURNING id', [req.user.id, req.params.id, version]);
     if (!result.rows[0]) return res.status(409).json({ error: 'Recipe missing or changed. Refresh before deleting.' });
     res.json({ ok: true });
+  });
+  // Create or return the public share link for one of the owner's recipes.
+  app.put('/api/recipes/:id/share', identify, async (req, res) => {
+    if (!(await sharingAvailable())) return res.status(503).json({ error: 'Sharing is being set up. Try again shortly.' });
+    const existing = await pool.query('SELECT share_token FROM une_recette.recipes WHERE owner_id=$1 AND id=$2', [req.user.id, req.params.id]);
+    if (!existing.rows[0]) return res.status(404).json({ error: 'Recipe not found' });
+    if (existing.rows[0].share_token) return res.json({ share_token: existing.rows[0].share_token });
+    // Unconditional update: the SELECT above already established the row exists and has no token.
+    const token = randomBytes(32).toString('hex');
+    const result = await pool.query('UPDATE une_recette.recipes SET share_token=$3 WHERE owner_id=$1 AND id=$2 RETURNING share_token', [req.user.id, req.params.id, token]);
+    res.json({ share_token: result.rows[0].share_token });
+  });
+  // Revoke the public link. The recipe itself stays private in the owner's collection.
+  app.delete('/api/recipes/:id/share', identify, async (req, res) => {
+    if (!(await sharingAvailable())) return res.status(503).json({ error: 'Sharing is being set up. Try again shortly.' });
+    const result = await pool.query('UPDATE une_recette.recipes SET share_token=NULL WHERE owner_id=$1 AND id=$2 RETURNING id', [req.user.id, req.params.id]);
+    if (!result.rows[0]) return res.status(404).json({ error: 'Recipe not found' });
+    res.json({ ok: true });
+  });
+  // Public share view. Without a session only the cover (title + image) is returned;
+  // any signed-in visitor with the link gets the full recipe, never the owner's collection.
+  app.get('/api/shared/:token', async (req, res) => {
+    if (!/^[a-f0-9]{64}$/.test(req.params.token)) return res.status(404).json({ error: 'This shared recipe is not available.' });
+    if (!(await sharingAvailable())) return res.status(404).json({ error: 'This shared recipe is not available.' });
+    const result = await pool.query('SELECT data FROM une_recette.recipes WHERE share_token=$1', [req.params.token]);
+    const row = result.rows[0];
+    if (!row) return res.status(404).json({ error: 'This shared recipe is not available.' });
+    const user = await attachUser(req);
+    if (!user) return res.json({ title: row.data.title, image: row.data.image || '' });
+    res.json({ recipe: row.data });
   });
   app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
   app.use((err, req, res, next) => { // eslint-disable-line no-unused-vars
