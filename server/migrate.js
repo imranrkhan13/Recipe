@@ -4,7 +4,9 @@ const pool = getPool();
 const client = await pool.connect();
 try {
   await client.query('BEGIN');
-  await client.query(await fs.readFile(new URL('../db/001-init.sql', import.meta.url), 'utf8'));
+  const dir = new URL('../db/', import.meta.url);
+  const files = (await fs.readdir(dir)).filter(f => f.endsWith('.sql')).sort();
+  for (const f of files) await client.query(await fs.readFile(new URL(f, dir), 'utf8'));
   await client.query('COMMIT');
   console.log('Une recette additive schema is ready.');
 } catch {
