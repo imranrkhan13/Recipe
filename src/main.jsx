@@ -2,11 +2,18 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.jsx'
+import { injectCss } from './theme.js'
 import { AccountGate } from './account.jsx'
+import { ShareTeaser, SharedRecipe } from './share.jsx'
+
+injectCss();
+const shareMatch = window.location.pathname.match(/^\/r\/([a-f0-9]{64})\/?$/);
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
-    <AccountGate>{user => <App key={user.username} />}</AccountGate>
+    {shareMatch
+      ? <AccountGate context="shared" prefix={<ShareTeaser token={shareMatch[1]} />}>{() => <SharedRecipe token={shareMatch[1]} />}</AccountGate>
+      : <AccountGate>{user => <App key={user.username} />}</AccountGate>}
   </StrictMode>,
 )
 if ('serviceWorker' in navigator) {
