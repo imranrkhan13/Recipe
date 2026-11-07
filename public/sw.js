@@ -1,4 +1,4 @@
-const CACHE = 'une-recette-shell-v2';
+const CACHE = 'une-recette-shell-v3';
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(['/offline.html', '/manifest.json', '/icon-192.png', '/icon-512.png'])).then(() => self.skipWaiting()));
 });
